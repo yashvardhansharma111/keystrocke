@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="bg-white shadow-subtle rounded-lg p-6 border border-gray-100">
               {children}
             </div>
-            <footer className="text-center text-sm text-gray-500 mt-6">Built for research — minimal UI</footer>
+            <footer className="text-center text-sm text-gray-500 mt-6">Built for keystroke research</footer>
           </main>
         </div>
       </body>
