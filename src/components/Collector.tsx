@@ -139,6 +139,8 @@ export default function Collector() {
     return { user_id: uuidv4(), age: "", gender: "", year: "" };
   });
 
+  const [lastSessionId, setLastSessionId] = useState<string>("");
+
   const [step, setStep] = useState<"intro"|"collect"|"done">("intro");
   const [qIndex, setQIndex] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(20);
@@ -291,6 +293,7 @@ export default function Collector() {
         return next;
       });
       setRawSessions(prev => [...prev, sessionPayload]);
+      setLastSessionId(sessId);
 
       // POST to server to append to public files
       try {
@@ -314,19 +317,63 @@ export default function Collector() {
     }
   }
 
+  function downloadLocalCsv() {
+    const header = CSV_HEADER + "\n";
+    const body = csvRows.join("\n");
+    const blob = new Blob([header + body], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "keystroke_features.csv";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function startNewSession() {
+    setStep("intro");
+    setQIndex(0);
+    setSecondsLeft(20);
+    setRecording(false);
+    setAwaitingRating(false);
+  }
+
   // UI
   if (step === "intro") {
     return (
-      <div>
-        <h1 className="text-2xl font-semibold text-primary mb-2">Keystroke Study</h1>
-        <p className="text-sm text-gray-600 mb-4">Answer 5 short prompts. Each prompt records typing for 20 seconds. After each, rate your stress (1–5).</p>
+      <div className="max-w-2xl mx-auto px-4 pt-10">
+        <h1 className="text-3xl font-semibold text-gray-900 mb-2">Keystroke Study</h1>
+        <p className="text-sm text-gray-600 mb-6">Answer 5 short prompts. Each prompt records typing for 20 seconds. After each, rate your stress (1–5).</p>
         <div className="grid grid-cols-2 gap-3 mb-4">
-          <input className="p-2 border rounded-md" placeholder="Age" value={user.age} onChange={e=>setUser({...user, age: e.target.value})} />
-          <input className="p-2 border rounded-md" placeholder="Gender (optional)" value={user.gender} onChange={e=>setUser({...user, gender: e.target.value})} />
-          <input className="p-2 border rounded-md col-span-2" placeholder="Year of study (e.g., 2)" value={user.year} onChange={e=>setUser({...user, year: e.target.value})} />
+          <input className="p-2 border rounded-md focus:ring-2 focus:ring-purple-300 focus:border-purple-400" placeholder="Age" value={user.age} onChange={e=>setUser({...user, age: e.target.value})} />
+          <select
+            className="p-2 border rounded-md focus:ring-2 focus:ring-purple-300 focus:border-purple-400 bg-white"
+            value={user.gender}
+            onChange={e=>setUser({...user, gender: e.target.value})}
+          >
+            <option value="">Select gender (optional)</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Non-binary">Non-binary</option>
+            <option value="Prefer not to say">Prefer not to say</option>
+            <option value="Other">Other</option>
+          </select>
+          <select
+            className="p-2 border rounded-md col-span-2 focus:ring-2 focus:ring-purple-300 focus:border-purple-400 bg-white"
+            value={user.year}
+            onChange={e=>setUser({...user, year: e.target.value})}
+          >
+            <option value="">Select year of study</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5+</option>
+          </select>
         </div>
         <div className="flex gap-3">
-          <button className="px-4 py-2 rounded-md border border-purple-600 text-purple-600 bg-white hover:bg-purple-50 active:bg-purple-100 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-300" onClick={startTest}>Start Test</button>
+          <button className="px-5 py-2.5 rounded-md bg-purple-600 text-white hover:bg-purple-700 active:bg-purple-800 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-300" onClick={startTest}>Start Test</button>
         </div>
       </div>
     );
@@ -334,15 +381,15 @@ export default function Collector() {
 
   if (step === "collect") {
     return (
-      <div>
-        <div className="text-sm text-muted text-center mb-2">Question {qIndex+1} of {QUESTIONS.length}</div>
-        <div className="p-4 rounded-md border border-gray-100 mb-4">
-          <p className="text-lg font-medium mb-3">{QUESTIONS[qIndex]}</p>
+      <div className="max-w-2xl mx-auto px-4 pt-10">
+        <div className="text-sm text-gray-500 mb-2">Question {qIndex+1} of {QUESTIONS.length}</div>
+        <div className="p-5 rounded-lg bg-purple-100/70 border border-purple-200 mb-5">
+          <p className="text-lg font-semibold text-gray-900 mb-3">{QUESTIONS[qIndex]}</p>
           <div className="flex items-center justify-between mb-2">
             <div className="text-4xl font-semibold text-purple-600">{secondsLeft}</div>
             <div className="text-sm text-gray-500">Type in the box — do not paste</div>
           </div>
-          <textarea ref={textareaRef} className="w-full min-h-[140px] p-3 border border-gray-200 rounded-md focus:ring-2 focus:ring-purple-300 focus:border-purple-400 resize-none" />
+          <textarea ref={textareaRef} className="w-full min-h-[140px] p-3 border border-gray-200 rounded-md focus:ring-2 focus:ring-purple-300 focus:border-purple-400 resize-none bg-white" />
           {awaitingRating ? (
             <div className="mt-4">
               <div className="text-sm text-gray-700 mb-2">How stressed were you while answering? (1 = not at all, 5 = extremely)</div>
@@ -366,9 +413,23 @@ export default function Collector() {
   }
 
   return (
-    <div>
-      <h2 className="text-xl font-semibold">Thank you — data collected.</h2>
-      <p className="mt-2 text-gray-600">Thanks for helping with the data. The researcher will collect the dataset separately.</p>
+    <div className="max-w-2xl mx-auto px-4 pt-10">
+      <h2 className="text-3xl font-semibold text-gray-900">Study Complete</h2>
+      <p className="mt-2 text-gray-600">Thank you for participating in this research study.</p>
+
+      <div className="mt-6 p-5 rounded-lg bg-purple-200/70 border border-purple-300">
+        <div className="font-semibold text-gray-900 mb-3">Summary:</div>
+        <div className="space-y-2 text-sm text-gray-800">
+          <div>Prompts completed: {QUESTIONS.length} of {QUESTIONS.length}</div>
+          <div>Session ID: {lastSessionId || "—"}</div>
+          <div>Data saved to localStorage</div>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        <button onClick={downloadLocalCsv} className="w-full px-5 py-2.5 rounded-md bg-purple-600 text-white hover:bg-purple-700 active:bg-purple-800 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-300">Download Data (CSV)</button>
+        <button onClick={startNewSession} className="w-full px-5 py-2.5 rounded-md bg-gray-100 text-gray-800 hover:bg-gray-200 active:bg-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-purple-200">Start New Session</button>
+      </div>
     </div>
   );
 }
