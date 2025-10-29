@@ -21,6 +21,7 @@ const QUESTIONS = [
   "What do you usually do to relax after a busy day?"
 ];
 
+const APPS_SCRIPT_URL = "/api/yashvardhan";
 const CSV_HEADER = [
   "session_id","user_id","age","gender","year_of_study","device_type","keyboard_type","question_id","question_text","prompt_context","window_start_ts","window_end_ts","duration_ms","n_keydowns","n_keyups","chars_per_sec","dwell_mean_ms","dwell_std_ms","dwell_median_ms","dwell_p10_ms","dwell_p90_ms","dd_mean_ms","dd_std_ms","dd_median_ms","pauses_gt_200","pauses_gt_500","pauses_gt_1000","longest_pause_ms","backspace_count","cv_dwell","cv_dd","hist_bin_0","hist_bin_1","hist_bin_2","hist_bin_3","hist_bin_4","hist_bin_5","inter_entropy","label_raw","raw_events_path"
 ].join(",");
@@ -234,76 +235,63 @@ export default function Collector() {
   async function submitRatingAndProceed(rating: number) {
     const windowEnd = nowMs();
     const sessId = uuidv4();
-    const sessionPayload = {
-      session_id: sessId,
-      user_id: user.user_id,
-      age: user.age || "",
-      gender: user.gender || "",
-      year_of_study: user.year || "",
-      question_id: qIndex + 1,
-      question_text: QUESTIONS[qIndex],
-      prompt_context: `Q${qIndex+1}`,
-      window_start_ts: windowStartRef.current,
-      window_end_ts: windowEnd,
-      events: eventsRef.current,
-      self_reported_stress: rating
-    };
 
     // extract features
     const feats = extractFeaturesFromEvents(eventsRef.current, windowStartRef.current, windowEnd);
     // If too few keydowns, discard
-    if (!feats || feats.n_keydowns < 5) {
+    if (!feats || feats.n_keydowns < 3) {
       // discard but still proceed
       // optional: show user-friendly notice
       console.warn("Too few keystrokes; session not saved.");
     } else {
-      // build CSV row aligned with header
-      const meta = {
+      const rawStr = JSON.stringify(eventsRef.current || []);
+      const rawToSend = rawStr.length > 45000 ? rawStr.slice(0,45000) : rawStr;
+      const body = {
         session_id: sessId,
         user_id: user.user_id,
         age: user.age || "",
         gender: user.gender || "",
         year_of_study: user.year || "",
-        device_type: navigator.userAgent,
-        keyboard_type: "",
         question_id: qIndex + 1,
         question_text: QUESTIONS[qIndex],
         prompt_context: `Q${qIndex+1}`,
         window_start_ts: windowStartRef.current,
         window_end_ts: windowEnd,
+        features: feats,
+        raw_events: rawToSend,
         label_raw: rating,
-        raw_events_path: ""
       };
-      const rowVals = [
-        meta.session_id, meta.user_id, meta.age, meta.gender, meta.year_of_study,
-        meta.device_type, meta.keyboard_type, meta.question_id, `"${meta.question_text.replace(/"/g,'""')}"`,
-        meta.prompt_context, meta.window_start_ts, meta.window_end_ts,
-        feats.duration_ms, feats.n_keydowns, feats.n_keyups, feats.chars_per_sec,
-        feats.dwell_mean_ms, feats.dwell_std_ms, feats.dwell_median_ms, feats.dwell_p10_ms, feats.dwell_p90_ms,
-        feats.dd_mean_ms, feats.dd_std_ms, feats.dd_median_ms,
-        feats.pauses_gt_200, feats.pauses_gt_500, feats.pauses_gt_1000,
-        feats.longest_pause_ms, feats.backspace_count, feats.cv_dwell, feats.cv_dd,
-        feats.hist_bin_0, feats.hist_bin_1, feats.hist_bin_2, feats.hist_bin_3, feats.hist_bin_4, feats.hist_bin_5,
-        feats.inter_entropy, meta.label_raw, meta.raw_events_path
-      ];
-      const csvRow = rowVals.join(",");
-      // append to local arrays
-      setCsvRows(prev => {
-        const next = [...prev, csvRow];
-        return next;
-      });
-      setRawSessions(prev => [...prev, sessionPayload]);
       setLastSessionId(sessId);
 
-      // POST to server to append to public files
       try {
-        await fetch("/api/yashvardhan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ csv_row: csvRow, raw_session: sessionPayload })
-        });
+        console.log("[Collector] Sending fetch to:", APPS_SCRIPT_URL);
+        let lastErr: any = null;
+        let success = false;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const res = await fetch(APPS_SCRIPT_URL, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body)
+            });
+            console.log("[Collector] Response status (attempt", attempt, "):", res.status);
+            const j = await res.json().catch(()=>({ ok:false }));
+            console.log("[Collector] Response body:", j);
+            if (j?.message === "duplicate") { success = true; break; }
+            if (j?.ok) { success = true; break; }
+            lastErr = new Error(j?.error || "bad response");
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+        if (!success) throw lastErr || new Error("upload failed");
+        console.log("[Collector] Saved session:", sessId);
       } catch (err) {
-        console.error("Server append failed:", err);
+        console.error("[Collector] Save failed, queued for retry:", err);
+        const pend = JSON.parse(localStorage.getItem("kc_pending")||"[]");
+        pend.push(body);
+        localStorage.setItem("kc_pending", JSON.stringify(pend));
+        console.log("[Collector] Pending queue size now:", pend.length);
       }
     }
 
